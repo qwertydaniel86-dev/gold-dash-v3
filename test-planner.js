@@ -1,7 +1,7 @@
 // node test-planner.js : tests the pure logic block (/*LOGIC*/ ... /*ENDLOGIC*/) of index.html
 var fs=require('fs'),assert=require('assert'),src=fs.readFileSync(__dirname+'/index.html','utf8');
 var m=src.match(/\/\*LOGIC\*\/([\s\S]*?)\/\*ENDLOGIC\*\//);assert(m,'logic block');
-var L=new Function(m[1]+';return{SIG_THR,SIG_CONF,SIG_W,SIG_NAME,sigThr,sigTol,sigBase,sigScore,sigStep,sigRaw,m15Move,aroonAgree,SV,SCALP,migrateC,sigStrength,aroonSigText,aroonSeg,aroonRow,aroon,aroonLabel,aroonNote,balKey,CS,plUsd,planCap,pnDefaultsFor,srcOf,touchCount,paperExpire,lbSpec,swings,fvgScan,lbLevels,planCount,rankSelect,paperOpen,paperClose,balGet,balAdd,balReset,closedRow,groupClose,plSummary,ptFmt,planResultRow,GD_AUTH,authCheck,authSessOk,pnCalc,pushHist,histAdd,histGet,hKey,HCAP,zoneStrat,planWhy,sigInfo,OT,pbEma,pbAtr,pbAgg,pbDir,pbStep,pbWalk,pbWhy,pbPlan,pbKey,pbStoreGet,pbStoreSet,pbPaperEval,PB_CAP,SW_BUF,SW_N,SW_K,SW_ATR,SW_NAME,swSwings,swLabel,swDir,swEvents,swLastLhHl,swAtr,swZones,swFvg,swLive,swInZone,swIsSweep,swTarget,swPlan,swChart,swEvaluate,swNorm,swClosed}')();var n=0;
+var L=new Function(m[1]+';return{SIG_THR,SIG_CONF,SIG_W,SIG_NAME,sigThr,sigTol,sigBase,sigScore,sigStep,sigRaw,m15Move,aroonAgree,SV,SCALP,migrateC,sigStrength,aroonSigText,aroonSeg,aroonRow,aroon,aroonLabel,aroonNote,balKey,CS,plUsd,planCap,pnDefaultsFor,srcOf,touchCount,paperExpire,lbSpec,swings,fvgScan,lbLevels,planCount,rankSelect,paperOpen,paperClose,balGet,balAdd,balReset,closedRow,groupClose,plSummary,ptFmt,planResultRow,GD_AUTH,authCheck,authSessOk,pnCalc,pushHist,histAdd,histGet,hKey,HCAP,zoneStrat,planWhy,sigInfo,OT,pbEma,pbAtr,pbAgg,pbDir,pbStep,pbWalk,pbWhy,pbPlan,pbKey,pbStoreGet,pbStoreSet,pbPaperEval,PB_CAP,SW_BUF,SW_N,SW_K,SW_ATR,SW_NAME,swSwings,swLabel,swDir,swEvents,swLastLhHl,swAtr,swZones,swFvg,swLive,swInZone,swIsSweep,swTarget,swPlan,swChart,swEvaluate,swNorm,swClosed,swFlipBars,swPhtHm}')();var n=0;
 function t(name,fn){fn();n++;console.log('ok',name)}
 var base={price:4000,off:0,lot:0.01,slD:15,tpD:30,acct:80,dp:2,xau:true};
 function c(k,o){var x={};for(var i in base)x[i]=base[i];x.k=k;if(o)for(var j in o)x[j]=o[j];return L.pnCalc(x)}
@@ -404,6 +404,85 @@ t('page: gold only, new storage prefixes, NFA, no biquote, sweep chart at top',f
  assert(/gdAuth3/.test(src));assert(/gdH3_/.test(src));assert(/gdPB3_/.test(src));assert(/gdPA3_/.test(src));
  assert(!/gdH2_|gdPB2_|gdC2|gdAuth'/.test(src.replace(/gdAuth3/g,'')));
  assert(/id="sigtag"/.test(src));assert(/Testing \/ paper only/.test(src))});
+
+
+t('equal swing highs are LH; equal lows are HL (BUY/SELL mirror)',function(){
+ var lab=L.swLabel([{i:0,t:0,k:'H',p:20},{i:1,t:1,k:'L',p:10},{i:2,t:2,k:'H',p:20},{i:3,t:3,k:'L',p:10}]);
+ assert.deepStrictEqual(lab.map(function(s){return s.lab}),['H','L','LH','HL'])});
+t('flip of a synthetic series swaps BUY/SELL and mirrors SL/TP',function(){
+ var C=8000,i,h=[],l=[],c=[],bs,fl,evA,evB,exp,got,zsA,zsB,pA,pS,side;
+ for(i=0;i<24;i++){h[i]=15;l[i]=14;c[i]=15}
+ h[4]=20;l[4]=14;c[4]=16;h[8]=15;l[8]=10;c[8]=12;h[12]=18;l[12]=14;c[12]=16;h[16]=19;l[16]=16;c[16]=19;
+ bs=[];for(i=0;i<24;i++)bs.push(swBar(i,c[i],h[i],l[i],c[i]));
+ fl=L.swFlipBars(bs,C);
+ evA=L.swEvents(bs,2);evB=L.swEvents(fl,2);
+ function flipSide(s){return s==='BUY'?'SELL':s==='SELL'?'BUY':s}
+ exp=evA.map(function(e){return [e.i,e.kind,flipSide(e.dir),+((C-e.level).toFixed(9))]}).sort();
+ got=evB.map(function(e){return [e.i,e.kind,e.dir,+(e.level.toFixed(9))]}).sort();
+ assert.deepStrictEqual(got,exp);
+ var lab=L.swLabel([{i:0,t:0,k:'L',p:10},{i:1,t:1,k:'H',p:20},{i:2,t:2,k:'L',p:12},{i:3,t:3,k:'H',p:22}]);
+ var labF=L.swLabel(lab.map(function(s){return {i:s.i,t:s.t,k:s.k==='H'?'L':'H',p:C-s.p}}));
+ assert.strictEqual(L.swDir(lab),'BUY');
+ assert.strictEqual(L.swDir(labF),'SELL');
+ pA=L.swPlan('BUY',100,97,1,106,2);
+ pS=L.swPlan('SELL',C-100,C-97,1,C-106,2);
+ assert(pA&&pS);assert.strictEqual(pS.side,'SELL');
+ assert.strictEqual(pS.ent,+(C-pA.ent).toFixed(2));
+ assert.strictEqual(pS.sl,+(C-pA.sl).toFixed(2));
+ assert.strictEqual(pS.tp,+(C-pA.tp).toFixed(2));
+ // Full evaluate: a long aligned bull series, then its flip
+ function trendBars(n,up){
+  var out=[],i,base=2000,o,cl,hi,lo;
+  for(i=0;i<n;i++){
+    if(up){o=base+i*2;cl=o+1.5;hi=cl+0.8;lo=o-0.4}
+    else {o=base-i*2;cl=o-1.5;hi=o+0.4;lo=cl-0.8}
+    // add mild fractal wiggles so N=2 swings confirm
+    if(i%8===4){if(up){hi=cl+3}else{lo=cl-3}}
+    if(i%8===6){if(up){lo=o-3}else{hi=o+3}}
+    out.push(swBar(900*(i+1),o,hi,lo,cl));
+  }
+  return out;
+ }
+ var b15=trendBars(80,true),b60=trendBars(40,true);
+ var ev=L.swEvaluate(b15,b60),evF=L.swEvaluate(L.swFlipBars(b15,C),L.swFlipBars(b60,C));
+ assert.strictEqual(flipSide(ev.s||'WAIT'), evF.s||'WAIT');
+ if(ev.dir15)assert.strictEqual(evF.dir15,flipSide(ev.dir15));
+ if(ev.dir60)assert.strictEqual(evF.dir60,flipSide(ev.dir60));
+ if(ev.plan||evF.plan){
+  assert(ev.plan&&evF.plan);
+  assert.strictEqual(evF.plan.side,flipSide(ev.plan.side));
+  assert.strictEqual(evF.plan.ent,+(C-ev.plan.ent).toFixed(2));
+  assert.strictEqual(evF.plan.sl,+(C-ev.plan.sl).toFixed(2));
+  assert.strictEqual(evF.plan.tp,+(C-ev.plan.tp).toFixed(2));
+ }
+ // also a hand-built sweep plan must mirror
+ var buy=L.swIsSweep(swBar(1,101,102,98,101),'BUY',100);
+ var sell=L.swIsSweep(L.swFlipBars([swBar(1,101,102,98,101)],C)[0],'SELL',C-100);
+ assert.strictEqual(buy,true);assert.strictEqual(sell,true);
+ var za=L.swZones(bs,L.swAtr(bs,14),1,bs.length-1);
+ var zf=L.swZones(fl,L.swAtr(fl,14),1,fl.length-1);
+ assert.strictEqual(za.length,zf.length);
+ za.forEach(function(z,ix){
+  var m=zf[ix];
+  assert.strictEqual(m.k,z.k==='DEMAND'?'SUPPLY':'DEMAND');
+  assert.ok(Math.abs(m.lo-(C-z.hi))<1e-9);
+  assert.ok(Math.abs(m.hi-(C-z.lo))<1e-9);
+ });
+});
+t('chart time readout is 24-hour HH:MM PHT',function(){
+ assert.strictEqual(L.swPhtHm(Date.UTC(2026,10,21,12,45,0)/1000),'20:45 PHT');
+ assert.strictEqual(L.swPhtHm(Date.UTC(2026,10,21,16,5,0)/1000),'00:05 PHT');
+ assert.strictEqual(L.swPhtHm(Date.UTC(2026,10,21,16,0,0)/1000),'00:00 PHT');
+ assert(/function swPhtHm/.test(src));
+ assert(/Asia\/Manila/.test(src));
+ assert(/swSetHover/.test(src));
+ assert(/swV\.hoverI/.test(src))});
+t('page: neon HUD chart labels and glowing demand/supply',function(){
+ assert(/function swPill/.test(src));assert(/function swGlowLine/.test(src));
+ assert(/#00ffc8/.test(src));assert(/#ff4fa3/.test(src));
+ assert(/'DEMAND'/.test(src)||/\"DEMAND\"/.test(src)||/dem\?'DEMAND'/.test(src));
+ assert(/SUPPLY/.test(src));assert(/'POI'/.test(src)||/POI/.test(src));
+ assert(/ui-monospace/.test(src));assert(/#2dd4bf/.test(src));assert(/#ff5c5c/.test(src))});
 
 authTests().then(function(){console.log(n+' tests passed')});
 
