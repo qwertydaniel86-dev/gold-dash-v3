@@ -1,7 +1,7 @@
 // node test-planner.js : tests the pure logic block (/*LOGIC*/ ... /*ENDLOGIC*/) of index.html
 var fs=require('fs'),assert=require('assert'),src=fs.readFileSync(__dirname+'/index.html','utf8');
 var m=src.match(/\/\*LOGIC\*\/([\s\S]*?)\/\*ENDLOGIC\*\//);assert(m,'logic block');
-var L=new Function(m[1]+';return{SIG_THR,SIG_CONF,SIG_W,SIG_NAME,sigThr,sigTol,sigBase,sigScore,sigStep,sigRaw,m15Move,aroonAgree,SV,SCALP,migrateC,sigStrength,aroonSigText,aroonSeg,aroonRow,aroon,aroonLabel,aroonNote,balKey,CS,plUsd,planCap,pnDefaultsFor,srcOf,touchCount,paperExpire,lbSpec,swings,fvgScan,lbLevels,planCount,rankSelect,paperOpen,paperClose,balGet,balAdd,balReset,closedRow,groupClose,plSummary,ptFmt,planResultRow,GD_AUTH,authCheck,authSessOk,pnCalc,pushHist,histAdd,histGet,hKey,HCAP,zoneStrat,planWhy,sigInfo,OT,pbEma,pbAtr,pbAgg,pbDir,pbStep,pbWalk,pbWhy,pbPlan,pbKey,pbStoreGet,pbStoreSet,pbPaperEval,PB_CAP,SW_BUF,SW_N,SW_K,SW_ATR,SW_NAME,swSwings,swLabel,swDir,swEvents,swLastLhHl,swAtr,swZones,swFvg,swLive,swInZone,swIsSweep,swTarget,swPlan,swChart,swEvaluate,swNorm,swClosed,swFlipBars,swPhtHm}')();var n=0;
+var L=new Function(m[1]+';return{SIG_THR,SIG_CONF,SIG_W,SIG_NAME,sigThr,sigTol,sigBase,sigScore,sigStep,sigRaw,m15Move,aroonAgree,SV,SCALP,migrateC,sigStrength,aroonSigText,aroonSeg,aroonRow,aroon,aroonLabel,aroonNote,balKey,CS,plUsd,planCap,pnDefaultsFor,srcOf,touchCount,paperExpire,lbSpec,swings,fvgScan,lbLevels,planCount,rankSelect,paperOpen,paperClose,balGet,balAdd,balReset,closedRow,groupClose,plSummary,ptFmt,planResultRow,GD_AUTH,authCheck,authSessOk,pnCalc,pushHist,histAdd,histGet,hKey,HCAP,zoneStrat,planWhy,sigInfo,OT,pbEma,pbAtr,pbAgg,pbDir,pbStep,pbWalk,pbWhy,pbPlan,pbKey,pbStoreGet,pbStoreSet,pbPaperEval,PB_CAP,SW_BUF,SW_N,SW_K,SW_ATR,SW_NAME,swSwings,swLabel,swDir,swEvents,swLastLhHl,swAtr,swZones,swFvg,swLive,swInZone,swIsSweep,swTarget,swPlan,swChart,swEvaluate,swNorm,swClosed,swFlipBars,swPhtHm,FEED_TO_MS,FEED_STICK_MS,feedInit,feedPaperPaused,feedTryPrimary,feedFetch}')();var n=0;
 function t(name,fn){fn();n++;console.log('ok',name)}
 var base={price:4000,off:0,lot:0.01,slD:15,tpD:30,acct:80,dp:2,xau:true};
 function c(k,o){var x={};for(var i in base)x[i]=base[i];x.k=k;if(o)for(var j in o)x[j]=o[j];return L.pnCalc(x)}
@@ -484,5 +484,56 @@ t('page: neon HUD chart labels and glowing demand/supply',function(){
  assert(/SUPPLY/.test(src));assert(/'POI'/.test(src)||/POI/.test(src));
  assert(/ui-monospace/.test(src));assert(/#2dd4bf/.test(src));assert(/#ff5c5c/.test(src))});
 
-authTests().then(function(){console.log(n+' tests passed')});
+
+// ---- backup feed fallback ----
+function feedUrls(){return {primary:'primary/XAUUSD',backup:'backup/XAUUSD'}}
+function feedGet(map){var calls=[];async function get(u){calls.push(u);var step=u.indexOf('primary')===0?map.primary:map.backup;if(typeof step==='function')step=step();if(step&&step.throw)throw new Error(step.throw);return step}get.calls=calls;return get}
+async function feedTests(){
+ var get,r,now=1e12,ok=function(mid){return {ok:true,status:200,json:{mid:mid}}};
+ // 1) primary throws -> backup
+ get=feedGet({primary:{throw:'502'},backup:ok(2)});
+ r=await L.feedFetch(L.feedInit(),now,feedUrls(),get,4000);
+ assert.strictEqual(r.source,'backup');assert.strictEqual(r.data.mid,2);assert.strictEqual(r.st.use,'backup');assert.strictEqual(r.st.until,now+L.FEED_STICK_MS);
+ assert.deepStrictEqual(get.calls,['primary/XAUUSD','backup/XAUUSD']);
+ n++;console.log('ok feed: primary fail uses backup');
+ // 2) still in the 60s window: do not retry primary even if it would work
+ get=feedGet({primary:ok(1),backup:ok(2)});
+ r=await L.feedFetch(r.st,now+30000,feedUrls(),get,4000);
+ assert.strictEqual(r.source,'backup');assert.strictEqual(r.data.mid,2);assert.strictEqual(r.st.use,'backup');
+ assert.deepStrictEqual(get.calls,['backup/XAUUSD']);
+ n++;console.log('ok feed: stays on backup for 60s');
+ // 3) after 60s, retry primary and recover
+ get=feedGet({primary:ok(1),backup:ok(2)});
+ r=await L.feedFetch(r.st,now+L.FEED_STICK_MS,feedUrls(),get,4000);
+ assert.strictEqual(r.source,'primary');assert.strictEqual(r.data.mid,1);assert.strictEqual(r.st.use,'primary');assert.strictEqual(r.st.until,0);
+ assert.deepStrictEqual(get.calls,['primary/XAUUSD']);
+ n++;console.log('ok feed: primary recovers after 60s');
+ // 4) non-2xx is a fail
+ get=feedGet({primary:{ok:false,status:502,json:{error:'x'}},backup:ok(2)});
+ r=await L.feedFetch(L.feedInit(),now,feedUrls(),get,4000);
+ assert.strictEqual(r.source,'backup');assert.strictEqual(r.data.mid,2);
+ n++;console.log('ok feed: non-2xx uses backup');
+ // 5) bad JSON is a fail
+ get=feedGet({primary:{ok:true,status:200,json:null},backup:ok(2)});
+ r=await L.feedFetch(L.feedInit(),now,feedUrls(),get,4000);
+ assert.strictEqual(r.source,'backup');
+ n++;console.log('ok feed: bad JSON uses backup');
+ // 6) paper paused only on backup
+ assert.strictEqual(L.feedPaperPaused(L.feedInit()),false);
+ assert.strictEqual(L.feedPaperPaused({use:'backup',until:now+1}),true);
+ assert.strictEqual(L.feedPaperPaused({use:'primary',until:0}),false);
+ n++;console.log('ok feed: paper paused only on backup');
+}
+
+t('page: backup feed fallback is wired, paper pauses, NFA stays',function(){
+ assert(/gd-feed\.qwertydaniel86\.workers\.dev/.test(src));
+ assert(/Backup feed: gold futures, a few \$ off spot/.test(src));
+ assert(/Paper entries and exits paused/.test(src));
+ assert(/id="feedn"/.test(src));
+ assert(/feedPaperPaused\(feedSt\)/.test(src));
+ assert(/FEED_TO_MS=4000/.test(src));
+ assert(/FEED_STICK_MS=60000/.test(src));
+ assert(/Not financial advice/.test(src))});
+
+authTests().then(feedTests).then(function(){console.log(n+' tests passed')});
 

@@ -93,11 +93,12 @@ body.inpos #top>#nt,body.inpos #top>#stats,body.inpos #top>#parts,body.inpos #to
 #swwhy{font-size:12px;color:#9ee9e0;margin-top:6px;line-height:1.35;font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
 #sigtag{display:block;font-size:11px;font-weight:700;color:#f5c542;margin-top:4px;text-align:center}
 
+#feedn{color:#f5c542;margin-top:4px}
 </style></head><body>
 <div id="lg"><form id="lf"><h2>Gold Dash v3</h2><div class="mu">Sign in</div><input id="lu" autocapitalize="none" autocorrect="off" autocomplete="username" placeholder="Username"><input id="lp" type="password" autocomplete="current-password" placeholder="Password"><button id="lgo" type="submit">Sign in</button><div id="lmsg"></div><div class="mu">Signals only, no trading. Not financial advice.</div></form></div>
 <div id="gbn"></div><div id="swbox"><div class="swh"><b>Structure</b><span class="mu">XAUUSD · pinch to zoom, drag to pan</span><div id="swtf"><button type="button" id="sw15" class="on">15m</button><button type="button" id="sw1h">1H</button></div></div><canvas id="swc" width="600" height="280"></canvas><div id="swwhy" class="mu">Loading 15m / 1H…</div></div>
 <div id="top"><div class="hd"><b id="sy">XAUUSD</b><span id="st" class="mu"></span><button id="gb">⚙</button></div>
-<div id="pxrow"><div id="pxl"><p class="px" id="pxp"><span id="px">—</span> <span id="arr"></span></p><div id="chg" class="mu">loading…</div></div><canvas id="ch"></canvas></div>
+<div id="pxrow"><div id="pxl"><p class="px" id="pxp"><span id="px">—</span> <span id="arr"></span></p><div id="chg" class="mu">loading…</div><div id="feedn" class="mu" style="display:none"></div></div><canvas id="ch"></canvas></div>
 <div id="sig" class="badge WAIT">WAIT</div><span id="sigtag">Testing / paper only</span><div id="str" class="str"></div><div id="spk" class="spike"></div><div id="fvw" class="fv"></div>
 <div class="btns"><button class="bb" id="bB">BUY</button><button class="bs" id="bS">SELL</button><button class="bc" id="bC">CLOSE</button></div>
 <div id="nt" class="mu"></div>
@@ -247,6 +248,17 @@ if(i&&((side==='BUY'&&(px<=plan.sl||px>=plan.tp))||(side==='SELL'&&(px>=plan.sl|
 s=side;lvl=swLastLhHl(live15,side);strong=lvl!=null&&((side==='BUY'&&tryO.bar.close>lvl)||(side==='SELL'&&tryO.bar.close<lvl));str=strong?'STRONG':'WEAK';why='Aggressive close after the 15m sweep. Testing / paper only';sweeps.push({t:tryO.bar.t,p:tryO.ext,side:side,i:look[i]});break}
 if(!why)why='Trend aligned '+side+' — watching';
 return pack()}
+
+var FEED_TO_MS=4000,FEED_STICK_MS=60000;
+function feedInit(){return {use:'primary',until:0}}
+function feedPaperPaused(st){return !!(st&&st.use==='backup')}
+function feedTryPrimary(st,now){return !st||st.use!=='backup'||now>=(st.until||0)}
+async function feedCall(u,get,ms){var r=await get(u,ms);if(!r)throw new Error('empty');if(r.ok===false||(r.status!=null&&(r.status<200||r.status>=300)))throw new Error('status');var d=r.json!==undefined?r.json:r;if(!d||typeof d!=='object')throw new Error('json');return d}
+async function feedFetch(st,now,urls,get,timeoutMs){timeoutMs=timeoutMs||FEED_TO_MS;var next=st||feedInit(),data=null;
+ if(feedTryPrimary(next,now)){try{data=await feedCall(urls.primary,get,timeoutMs);return {st:feedInit(),data:data,source:'primary'}}catch(e){next={use:'backup',until:now+FEED_STICK_MS}}}
+ else next={use:'backup',until:next.until};
+ try{data=await feedCall(urls.backup,get,timeoutMs);return {st:next,data:data,source:'backup'}}
+ catch(e){e.st=next;throw e}}
 /*ENDLOGIC*/
 var BASE=atob('aHR0cHM6Ly9iaXF1b3RlLmlvL2FwaQ=='),
 GR=[['Metals',[['XAUUSD','Gold',2],['XAGUSD','Silver',3],['XPTUSD','Platinum',2]]],
@@ -265,7 +277,14 @@ function $(i){return document.getElementById(i)}
 function f(x){return x.toFixed(DP[SYM])}
 function API(){return BASE+'/'+SYM}
 function at(ms){var t=Date.now()-ms,b=null;for(var i=0;i<H.length;i++){if(H[i][0]<=t)b=H[i];else break}return b}
-async function j(u){var r=await fetch(u,{cache:'no-store'});return r.json()}
+var FEEDB='https://gd-feed.qwertydaniel86.workers.dev',feedSt=feedInit();
+function feedPath(u){return u.indexOf(BASE)===0?u.slice(BASE.length):u}
+async function feedHttp(u,ms){var ac=typeof AbortController!=='undefined'?new AbortController():null,t=ac?setTimeout(function(){ac.abort()},ms):null;
+ try{var r=await fetch(u,{cache:'no-store',signal:ac?ac.signal:undefined}),txt=await r.text(),json=null;try{json=JSON.parse(txt)}catch(e){json=null}return {ok:r.ok,status:r.status,json:json}}
+ finally{if(t)clearTimeout(t)}}
+function feedNote(){var e=$('feedn');if(!e)return;if(feedPaperPaused(feedSt)){e.style.display='block';e.textContent=(!SYM||SYM==='XAUUSD')?'Backup feed: gold futures, a few $ off spot. Paper entries and exits paused.':'Backup feed: Yahoo proxy, paper entries and exits paused.'}else{e.style.display='none';e.textContent=''}}
+async function j(u){try{var r=await feedFetch(feedSt,Date.now(),{primary:u,backup:FEEDB+feedPath(u)},feedHttp,FEED_TO_MS);feedSt=r.st;feedNote();return r.data}catch(e){if(e&&e.st)feedSt=e.st;else feedSt={use:'backup',until:Date.now()+FEED_STICK_MS};feedNote();throw e}}
+
 function ld(k){try{return JSON.parse(localStorage[k]||'{}')||{}}catch(e){return{}}}
 var EA=ld('gdE3'),PA=ld('gdP3');
 function E(){return EA[SYM]||(EA[SYM]=[])}function P(){return PA[SYM]||(PA[SYM]=[])}
@@ -398,7 +417,7 @@ var AX=null;function beep(){try{AX=AX||new (window.AudioContext||window.webkitAu
 function pst(p,s,now){p.st=s;if(s=='Expired'||s=='Cancelled'||s=='SL hit'||s=='TP2 hit')p.cl=now}
 function planTick(m){var c=$('plc');if(!C.pl){c.style.display='none';return}
  var now=Date.now(),a=atr||m*0.002,L=PLs(),ctx={sym:SYM,xau:isXau(),dp:DP[SYM],t:now};
- L.forEach(function(p){if(p.cl)return;var o=p.st;
+ L.forEach(function(p){if(p.cl)return;if(feedPaperPaused(feedSt))return;var o=p.st;
   if(now>p.ex){if(p.fl&&p.pt&&p.pt.rem>0)paperExpire(p,m,ctx).forEach(logClosed);pst(p,'Expired',now)}
   else if(!closed){var d=p.d;
    if(!p.fl){if(d*(m-p.sl)<=0)pst(p,'Cancelled',now);else if(d*(m-p.ent)<=0){p.fl=now;pst(p,'Filled',now)}else pst(p,Math.abs(m-p.ent)<=0.25*a?'Near entry':'Waiting',now)}
@@ -409,7 +428,7 @@ function planTick(m){var c=$('plc');if(!C.pl){c.style.display='none';return}
  for(var i=L.length-1;i>=0;i--)if(L[i].cl&&now-L[i].cl>1800000){L.splice(i,1);svP()}
  var h1=TR['1h'],h4=TR['4h'],se=sess(),active=L.filter(function(p){return !p.cl}).length,msg='',lv=lbNow(a),N=lv?planCount(lv,a,lv.n5):null,
  tr=h1&&h4&&h1.d==h4.d&&h1.d!=0,cks=[['Trend agrees',!h1||!h4?null:tr],['Market open',!closed],['Session good ('+se.w+' PHT)',se.ok],['R:R ≥ 1:'+C.plrr,null]];
- if(!h1||!h4)msg='Loading 1H/4H trend…';else if(!lv)msg='Loading '+C.lb+' lookback…';else if(!tr)msg='No new plans, timeframes disagree';else if(closed)msg='No new plans, market closed';else if(!se.ok)msg='No new plans, outside good session ('+se.w+' PHT)';
+ if(!h1||!h4)msg='Loading 1H/4H trend…';else if(!lv)msg='Loading '+C.lb+' lookback…';else if(!tr)msg='No new plans, timeframes disagree';else if(closed)msg='No new plans, market closed';else if(!se.ok)msg='No new plans, outside good session ('+se.w+' PHT)';else if(feedPaperPaused(feedSt))msg='Backup feed — paper entries and exits paused';
  else if(active<N){var cl=L.map(function(p){return p.ent}),r=mkPlans(m,h1.d,N-active,cl,lv);cks[3][1]=r.plans.length>0?true:false;
   r.plans.forEach(function(n){n.ct=now;n.lot=curLot();n.id=now+'-'+n.ent.toFixed(DP[SYM]);n.ex=Math.min(now+C.plh*36e5,se.end||Infinity);L.push(n)});
   if(r.plans.length){svP();note(SYM+' '+r.plans.length+' new '+(h1.d>0?'BUY':'SELL')+' LIMIT plan'+(r.plans.length>1?'s':''))}
@@ -560,7 +579,7 @@ function pbPaint(){var s=(PBview&&PBview.s)||'WAIT',str=(PBview&&PBview.str)||''
  if(w)w.textContent=why;if(p)p.innerHTML=plan?'Suggested plan: SL '+f(plan.sl)+' (1.5×5m ATR) · TP '+f(plan.tp)+' (2R) · 60-minute time stop · one position at a time.':'';
  var sg=$('sgs-pb');if(sg)sg.innerHTML='<b>Pullback</b> · <span class="'+(s=='BUY'?'up':s=='SELL'?'dn':'WAITc')+'">'+s+(str?' '+str:'')+'</span> · '+why+(plan?' · SL '+f(plan.sl)+' · TP '+f(plan.tp)+' · 60m':'')+' · Paper-only, testing';
  pbLogOut()}
-function pbUpdate(m){var r=pbCompute(m);PBst=r.st;PBview=r.st;try{pbPaperLive(m,Date.now(),r.fires)}catch(e){}pbPaint()}
+function pbUpdate(m){var r=pbCompute(m);PBst=r.st;PBview=r.st;try{if(!feedPaperPaused(feedSt))pbPaperLive(m,Date.now(),r.fires)}catch(e){}pbPaint()}
 var bars15=[],bars1h=[],SW={s:'WAIT',str:'',why:'Loading…',plan:null,payload:null},swBusy=false,swAgain=false,swTf='15m',swV={a:0,b:0,pinching:false};
 async function swLoad(){if(swBusy){swAgain=true;return}swBusy=true;try{var sy=SYM,r=await Promise.all([j(API()+'/ohlc?interval=15m&limit=200'),j(API()+'/ohlc?interval=1h&limit=200')]);if(sy!=SYM)return;bars15=swNorm((r[0].bars||[]).slice().reverse(),900);bars1h=swNorm((r[1].bars||[]).slice().reverse(),3600);SW=swEvaluate(bars15,bars1h);try{swDraw();swPaint()}catch(e){}}catch(e){}swBusy=false;if(swAgain){swAgain=false;swLoad()}}
 function swPaint(){if(!$('sig'))return;var s=SW&&SW.s?SW.s:'WAIT';$('sig').className='badge '+s;$('sig').textContent=s;if($('sgs'))$('sgs').innerHTML='<b>Sweep</b> · <span class="'+(s=='BUY'?'up':s=='SELL'?'dn':'WAITc')+'">'+s+(SW.str?' '+SW.str:'')+'</span> · '+(SW.why||'')+(SW.plan?' · SL '+f(SW.plan.sl)+' · TP '+f(SW.plan.tp)+' · R:R 1:'+SW.plan.rr:'')+' · Testing / paper only';if($('str')&&SW){if(SW.str)$('str').innerHTML='<span class="'+(SW.s=='BUY'?'up':SW.s=='SELL'?'dn':'')+'">'+SW.str+'</span>';}if($('swwhy'))$('swwhy').textContent=(SW&&SW.dir15?'15m '+(SW.dir15):'15m —')+' · '+(SW&&SW.dir60?'1H '+(SW.dir60):'1H —')+' · '+(SW&&SW.why?SW.why:'')}
